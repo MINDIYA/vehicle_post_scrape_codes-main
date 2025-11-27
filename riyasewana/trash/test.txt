@@ -1,0 +1,29 @@
+[<div class="two-columns--19Hyo full-width--XovDn justify-content-flex-start--1Xozy align-items-normal--vaTgD flex-wrap-nowrap--3IpfJ 
+flex-direction-row--27fh1 flex--3fKk1"><div class="word-break--2nyVq label--3oVZK">Brand: </div><div class="word-break--2nyVq value-
+-1lKHt"><div><a class="ad-meta-desktop--1Zyra" data-testid="admeta-link" href="/en/ads/sri-lanka/cars/toyota" title="Toyota Cars">
+<span>Toyota</span></a></div></div></div>, <div class="two-columns--19Hyo full-width--XovDn justify-content-flex-start--1Xozy a
+lign-items-normal--vaTgD flex-wrap-nowrap--3IpfJ flex-direction-row--27fh1 flex--3fKk1"><div class="word-break--2nyVq label--3o
+VZK">Model: </div><div class="word-break--2nyVq value--1lKHt"><div><a class="ad-meta-desktop--1Zyra" data-testid="admeta-link" h
+ref="/en/ads/sri-lanka/cars/toyota/pixis" title="Toyota Pixis"><span>Pixis</span></a></div></div></div>, <div class="two-columns--19
+Hyo full-width--XovDn justify-content-flex-start--1Xozy align-items-normal--vaTgD flex-wrap-nowrap--3IpfJ flex-direction-row--27f
+1 flex--3fKk1"><div class="word-break--2nyVq label--3oVZK">Year of Manufacture: </div><div class="word-break--2nyVq value--1l
+KHt"><div><a class="ad-meta-desktop--1Zyra" data-testid="admeta-link" href="/en/ads/s/040507/sri-lanka/cars/toyota/pixis/2014" 
+title="Toyota Pixis 2014"><span>2014</span></a></div></div></div>, <div class="two-columns--19Hyo full-width--XovDn justify-co
+ntent-flex-start--1Xozy align-items-normal--vaTgD flex-wrap-nowrap--3IpfJ flex-direction-row--27fh1 flex--3fKk1"><div class="
+word-break--2nyVq label--3oVZK">Condition: </div><div class="word-break--2nyVq value--1lKHt"><div><a class="ad-meta-desktop--1Z
+yra" data-testid="admeta-link" href="/en/ads/c/sri-lanka/cars/used/toyota/pixis" title="Used Toyota Pixis 2014"><span>Used</spa
+n></a></div></div></div>, <div class="two-columns--19Hyo full-width--XovDn justify-content-flex-start--1Xozy align-items-norma
+l--vaTgD flex-wrap-nowrap--3IpfJ flex-direction-row--27fh1 flex--3fKk1"><div class="word-break--2nyVq label--3oVZK">Transmissi
+on: </div><div class="word-break--2nyVq value--1lKHt">Automatic</div></div>, <div class="two-columns--19Hyo full-width--XovDn 
+justify-content-flex-start--1Xozy align-items-normal--vaTgD flex-wrap-nowrap--3IpfJ flex-direction-row--27fh1 flex--3fKk1"><div
+ class="word-break--2nyVq label--3oVZK">Body type: </div><div class="word-break--2nyVq value--1lKHt"><div><a class="ad-meta-desk
+ top--1Zyra" data-testid="admeta-link" href="/en/ads/s/0406/sri-lanka/cars/toyota/hatchback" title="Toyota Hatchback Cars"><span
+ >Hatchback</span></a></div></div></div>, <div class="two-columns--19Hyo full-width--XovDn justify-content-flex-start--1Xozy alig
+ n-items-normal--vaTgD flex-wrap-nowrap--3IpfJ flex-direction-row--27fh1 flex--3fKk1"><div class="word-break--2nyVq label--3oVZK"
+ >Fuel type: </div><div class="word-break--2nyVq value--1lKHt"><div><a class="ad-meta-desktop--1Zyra" data-testid="admeta-link" 
+ href="/en/ads/s/0408/sri-lanka/cars/toyota/petrol" title="Toyota Petrol Cars"><span>Petrol</span></a></div></div></div>, <div c
+ lass="two-columns--19Hyo full-width--XovDn justify-content-flex-start--1Xozy align-items-normal--vaTgD flex-wrap-nowrap--3Ipf
+ J flex-direction-row--27fh1 flex--3fKk1"><div class="word-break--2nyVq label--3oVZK">Engine capacity: </div><div class="wor
+ d-break--2nyVq value--1lKHt">660 cc</div></div>, <div class="two-columns--19Hyo full-width--XovDn justify-content-flex-start
+ --1Xozy align-items-normal--vaTgD flex-wrap-nowrap--3IpfJ flex-direction-row--27fh1 flex--3fKk1"><div class="word-break--2nyV
+ q label--3oVZK">Mileage: </div><div class="word-break--2nyVq value--1lKHt">41,000 km</div></div>]
