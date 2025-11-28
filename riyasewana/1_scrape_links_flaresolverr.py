@@ -192,7 +192,7 @@ def main():
 
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M')  # e.g., '2025-11-20_13-52'
-    path = f'riyasewana_hrefs_list_flaresolverr_{timestamp}.csv
+    path = f'riyasewana_hrefs_list_flaresolverr_{timestamp}.csv'
     
     try:
         with open(path, mode='w', newline='', encoding='utf-8') as file:
