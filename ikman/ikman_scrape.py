@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-RIYASEWANA SCRAPER - DOM MASTER FIX
-- FIX: specific targeting of <p class="moreh"> based on user screenshot.
-- LOGIC: Finds label -> goes up to parent <td> -> grabs next sibling <td>.
-- ACCURACY: 100% accurate for Mileage/Engine because it uses the table structure.
+IKMAN.LK SCRAPER - FINAL SPECS FIX
+- FIX: Solved missing Fuel/Transmission using 'Keyword Sweep'.
+- LOGIC: Regex searches for finite values (Petrol, Diesel, Auto, Manual) directly.
+- CORE: Includes Location Fix (Subtitle Link) and YOM Fix (Text Stream).
 """
 
 import time
@@ -23,20 +23,20 @@ from tqdm import tqdm
 # ⚙️ CONFIGURATION
 # ==========================================
 SEARCH_WORKERS = 2    
-DETAIL_WORKERS = 6    
+DETAIL_WORKERS = 4    
 
 FLARESOLVERR_URL = "http://localhost:8191/v1"
 
 MAKES = ['toyota', 'nissan', 'suzuki', 'honda', 'mitsubishi', 'mazda', 
-         'daihatsu', 'kia', 'hyundai', 'micro', 'audi', 'bmw', 'mercedes-benz', 'land-rover', 'tata', 'mahindra']
-TYPES = ['cars', 'vans', 'suvs', 'crew-cabs', 'pickups']
+         'daihatsu', 'kia', 'hyundai', 'micro', 'audi', 'bmw', 'mercedes-benz', 'land-rover']
+TYPES = ['cars', 'vans', 'suvs', 'motorbikes', 'heavy-duty'] 
 
-MAX_PAGES_PER_COMBO = 40
+MAX_PAGES_PER_COMBO = 10 
 DAYS_TO_KEEP = 30
 BATCH_SIZE = 10
 
 print("="*60)
-print(f"🚀 RIYASEWANA DOM MASTER")
+print(f"🚀 IKMAN.LK SPECS FIX")
 print(f"⚡ Search Threads: {SEARCH_WORKERS} | 📥 Extractor Threads: {DETAIL_WORKERS}")
 print("="*60)
 
@@ -81,7 +81,7 @@ class FlareSolverrClient:
 
     def create_session(self):
         try:
-            sid = f"riysess_{random.randint(1000,9999)}_{int(time.time())}"
+            sid = f"ikman_{random.randint(1000,9999)}_{int(time.time())}"
             payload = {"cmd": "sessions.create", "session": sid}
             r = requests.post(self.url, json=payload, headers=self.headers, timeout=10)
             if r.status_code == 200:
@@ -97,81 +97,89 @@ class FlareSolverrClient:
             except: pass
 
     def fetch(self, url):
-        payload = {"cmd": "request.get", "url": url, "maxTimeout": 40000}
+        payload = {"cmd": "request.get", "url": url, "maxTimeout": 60000}
         if self.session_id: payload["session"] = self.session_id
         try:
-            r = requests.post(self.url, json=payload, headers=self.headers, timeout=45)
+            r = requests.post(self.url, json=payload, headers=self.headers, timeout=60)
             if r.status_code == 200:
                 return r.json().get("solution", {}).get("response", "")
         except: pass
         return None
 
+def parse_ikman_date(date_str):
+    today = datetime.now()
+    date_str = date_str.lower().strip()
+    try:
+        if 'minute' in date_str or 'hour' in date_str or 'now' in date_str:
+            return today.strftime("%Y-%m-%d")
+        elif 'yesterday' in date_str:
+            return (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            parts = date_str.split()
+            day = int(parts[0])
+            month_str = parts[1][:3]
+            year = int(parts[2]) if len(parts) > 2 else today.year
+            month_map = {'jan':1, 'feb':2, 'mar':3, 'apr':4, 'may':5, 'jun':6, 
+                         'jul':7, 'aug':8, 'sep':9, 'oct':10, 'nov':11, 'dec':12}
+            return datetime(year, month_map[month_str], day).strftime("%Y-%m-%d")
+    except:
+        return datetime.now().strftime("%Y-%m-%d")
+
 # ---------------------------------------------------------
-# WORKER 1: LINK HUNTER
+# WORKER 1: HARVESTER
 # ---------------------------------------------------------
 def harvest_task(client, make, v_type, page_num, cutoff_date):
-    url = f"https://riyasewana.com/search/{v_type}/{make}"
+    url = f"https://ikman.lk/en/ads/sri-lanka/{v_type}/{make}"
     if page_num > 1: url += f"?page={page_num}"
     
     html = client.fetch(url)
     if not html: return 0
 
     soup = BeautifulSoup(html, 'html.parser')
-    all_links = soup.find_all('a', href=True)
+    items = soup.find_all('li', class_=re.compile(r'(normal|top-ad)--'))
+    
     local_count = 0
     unique_check = set()
 
-    for link in all_links:
-        href = link['href']
-        if '/buy/' in href and '-sale-' in href:
+    for item in items:
+        try:
+            a_tag = item.find('a', href=True)
+            if not a_tag: continue
+            
+            href = f"https://ikman.lk{a_tag['href']}"
             if href in unique_check: continue
             unique_check.add(href)
-            
-            title = link.get_text(" ", strip=True)
-            if len(title) < 5:
-                h2 = link.find_parent('h2')
-                if h2: title = h2.get_text(" ", strip=True)
 
-            container = link.find_parent('li')
-            if not container: container = link.find_parent('div', class_=re.compile('item'))
-            
-            final_date = "Check_Page"
+            title_tag = item.find('h2', class_=re.compile(r'heading--'))
+            title = title_tag.get_text(strip=True) if title_tag else "Unknown"
+
             price = "0"
+            price_tag = item.find('div', class_=re.compile(r'price--'))
+            if price_tag:
+                price_match = re.search(r'Rs\s*([\d,]+)', price_tag.get_text(strip=True))
+                if price_match: price = price_match.group(1).replace(',', '')
 
-            if container:
-                cont_text = container.get_text(" ", strip=True)
-                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', cont_text)
-                if date_match:
-                    d_str = date_match.group(1)
-                    try:
-                        if datetime.strptime(d_str, "%Y-%m-%d") < cutoff_date:
-                            with stats_lock: stats['skipped_date'] += 1
-                            continue 
-                        final_date = d_str
-                    except: pass
-                
-                price_match = re.search(r'Rs\.?\s*([\d,]+)', cont_text)
-                if price_match:
-                    price = price_match.group(1).replace(',', '')
-
-            item = {'url': href, 'date': final_date, 'make': make, 'type': v_type, 'title': title, 'price': price}
-            ad_queue.put(item)
+            item_data = {'url': href, 'date': "Check_Page", 'make': make, 'type': v_type, 'title': title, 'price': price}
+            ad_queue.put(item_data)
             local_count += 1
+        except: continue
 
     with stats_lock: stats['found'] += local_count
     return local_count
 
 # ---------------------------------------------------------
-# WORKER 2: DOM MASTER EXTRACTOR
+# WORKER 2: EXTRACTOR
 # ---------------------------------------------------------
 def extractor_worker(basic_writer, detail_writer, cutoff_date):
     client = FlareSolverrClient()
     if not client.create_session(): return
 
-    # Regex for Contact finding (Fallback)
+    # --- COMPILED PATTERNS ---
+    # Finite lists of known values for Fuel and Transmission
+    re_fuel = re.compile(r'\b(Petrol|Diesel|Hybrid|Electric|CNG)\b', re.IGNORECASE)
+    re_trans = re.compile(r'\b(Automatic|Manual|Tiptronic|Other transmission)\b', re.IGNORECASE)
     re_phone = re.compile(r'(?:07\d|0\d{2})[- ]?\d{3}[- ]?\d{4}')
-    re_yom = re.compile(r'\b(20\d{2}|19\d{2})\b')
-    
+
     while not stop_event.is_set() or not ad_queue.empty():
         try:
             item = ad_queue.get(timeout=3)
@@ -184,16 +192,18 @@ def extractor_worker(basic_writer, detail_writer, cutoff_date):
             soup = BeautifulSoup(html, "html.parser")
             full_text = soup.get_text(" ", strip=True)
 
-            # Date Check
+            # --- 1. DATE ---
             final_date = item['date']
             if final_date == "Check_Page":
-                dm = re.search(r'(\d{4}-\d{2}-\d{2})', full_text)
-                if dm:
+                date_div = soup.find(string=re.compile(r'(Posted on|Updated on)'))
+                if date_div:
+                    raw_d = date_div.find_parent().get_text(strip=True).replace("Posted on", "").replace("Updated on", "").split(",")[0].strip()
+                    parsed_d = parse_ikman_date(raw_d)
                     try:
-                        if datetime.strptime(dm.group(1), "%Y-%m-%d") < cutoff_date:
+                        if datetime.strptime(parsed_d, "%Y-%m-%d") < cutoff_date:
                             with stats_lock: stats['skipped_date'] += 1
                             continue
-                        final_date = dm.group(1)
+                        final_date = parsed_d
                     except: pass
                 else:
                     final_date = datetime.now().strftime("%Y-%m-%d")
@@ -204,62 +214,59 @@ def extractor_worker(basic_writer, detail_writer, cutoff_date):
                 'Location': '', 'Description': ''
             }
 
-            # ========================================================
-            # 🟢 THE DOM FIX (Based on Screenshot)
-            # ========================================================
-            # Strategy: Find <p class="moreh"> -> Get Parent <td> -> Get Next <td>
+            # --- 2. KEYWORD SWEEP (The Fix for Fuel/Trans) ---
+            # We search the whole page text for known keywords.
+            # This bypasses the need to find specific "Labels" in the HTML.
             
-            labels = soup.find_all('p', class_='moreh')
-            
-            for label in labels:
-                txt = label.get_text(strip=True).lower()
-                
-                # Navigate: <p> -> <td> -> next_sibling <td>
-                parent_td = label.find_parent('td')
-                if parent_td:
-                    value_td = parent_td.find_next_sibling('td')
-                    if value_td:
-                        val = value_td.get_text(strip=True)
-                        
-                        if 'mileage' in txt:
-                            details['Mileage'] = val + " km" if "km" not in val.lower() else val
-                        elif 'engine' in txt or 'capacity' in txt:
-                            details['Engine'] = val + " cc" if "cc" not in val.lower() else val
-                        elif 'transmission' in txt or 'gear' in txt:
-                            details['Transmission'] = val
-                        elif 'fuel' in txt:
-                            details['Fuel'] = val
-                        elif 'yom' in txt or 'year' in txt:
-                            details['YOM'] = val
+            m_fuel = re_fuel.search(full_text)
+            if m_fuel: details['Fuel'] = m_fuel.group(1).title()
 
-            # ========================================================
-            # 🟠 FALLBACKS (If DOM fails)
-            # ========================================================
-            
-            # YOM Fallback
-            if not details['YOM']:
-                m_yom = re_yom.search(item['title'])
-                if m_yom: details['YOM'] = m_yom.group(1)
+            m_trans = re_trans.search(full_text)
+            if m_trans: details['Transmission'] = m_trans.group(1).title()
 
-            # Contact Fallback
+            # --- 3. TEXT STREAM SCANNER (For YOM, Engine, Mileage) ---
+            lines = [line.strip() for line in soup.get_text("\n").split("\n") if line.strip()]
+            for i, line in enumerate(lines):
+                line_lower = line.lower()
+                if i + 1 < len(lines):
+                    next_line = lines[i+1]
+                    # Be specific with Labels to avoid false positives
+                    if 'model year' in line_lower and not details['YOM']: 
+                        details['YOM'] = next_line
+                    elif 'engine capacity' in line_lower and not details['Engine']: 
+                        details['Engine'] = next_line
+                    elif 'mileage' in line_lower and not details['Mileage']: 
+                        details['Mileage'] = next_line
+
+            # --- 4. LOCATION FIX ---
+            loc_link = soup.find('a', class_=re.compile(r'subtitle-location-link'))
+            if loc_link:
+                details['Location'] = loc_link.get_text(strip=True)
+            else:
+                parent_loc = soup.find('a', class_=re.compile(r'subtitle-parentlocation-link'))
+                if parent_loc:
+                    txt = parent_loc.get_text(strip=True)
+                    if " in " in txt: details['Location'] = txt.split(" in ")[-1].strip()
+
+            # --- 5. PRICE & CONTACT ---
+            if item['price'] == "0":
+                for line in lines[:20]:
+                    if 'Rs' in line:
+                        p_match = re.search(r'Rs\s*([\d,]+)', line)
+                        if p_match: 
+                            item['price'] = p_match.group(1).replace(',', '')
+                            break
+
             phones = re_phone.findall(full_text)
             if phones:
                 clean_phones = list(set([p.replace('-', '').replace(' ', '') for p in phones]))
                 details['Contact'] = " / ".join(clean_phones)
 
-            # Location Fallback
-            h1 = soup.find('h1')
-            if h1 and " in " in h1.get_text():
-                details['Location'] = h1.get_text().split(" in ")[-1].strip()
-            elif (loc_m := re.search(r'-sale-([a-zA-Z]+)-', item['url'])):
-                details['Location'] = loc_m.group(1).capitalize()
+            desc_container = soup.find('div', class_=re.compile(r'description--'))
+            if desc_container:
+                details['Description'] = desc_container.get_text(strip=True).replace("Show more", "")[:500]
 
-            # Description
-            desc_h = soup.find(string=re.compile(r'Description', re.IGNORECASE))
-            if desc_h:
-                container = desc_h.find_parent().find_next('div') or desc_h.find_parent().find_next('p')
-                if container: details['Description'] = container.get_text(strip=True)[:500]
-
+            # Save
             row_basic = {'Date': final_date, 'Make': item['make'], 'Type': item['type'], 'YOM': details['YOM'], 'Model': item['title'], 'Price': item['price']}
             row_detailed = {'Date': final_date, 'Make': item['make'], 'Type': item['type'], 'YOM': details['YOM'], 'Model': item['title'], 'Price': item['price'], 'Transmission': details['Transmission'], 'Fuel': details['Fuel'], 'Engine': details['Engine'], 'Mileage': details['Mileage'], 'Location': details['Location'], 'Contact': details['Contact'], 'URL': item['url']}
 
@@ -274,12 +281,12 @@ def extractor_worker(basic_writer, detail_writer, cutoff_date):
 
 def main():
     cutoff = datetime.now() - timedelta(days=DAYS_TO_KEEP)
-    folder = "riyasewana_dom_data"
+    folder = "ikman_specs_data"
     if not os.path.exists(folder): os.makedirs(folder)
     
     ts = time.strftime('%Y-%m-%d_%H-%M')
-    basic_csv = f"{folder}/RIYA_BASIC_{ts}.csv"
-    detail_csv = f"{folder}/RIYA_DETAILED_{ts}.csv"
+    basic_csv = f"{folder}/IKMAN_BASIC_{ts}.csv"
+    detail_csv = f"{folder}/IKMAN_DETAILED_{ts}.csv"
     
     basic_fields = ['Date', 'Make', 'Type', 'YOM', 'Model', 'Price']
     detail_fields = ['Date', 'Make', 'Type', 'YOM', 'Model', 'Price', 'Transmission', 'Fuel', 'Engine', 'Mileage', 'Location', 'Contact', 'URL']
@@ -293,7 +300,7 @@ def main():
         return
     client_test.destroy_session()
 
-    print("🚀 Starting DOM Master Extraction...")
+    print("🚀 Starting Ikman Specs Fix...")
     
     ex_pool = ThreadPoolExecutor(max_workers=DETAIL_WORKERS)
     for _ in range(DETAIL_WORKERS):
