@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-RIYASEWANA SCRAPER - DOM MASTER FIX
-- FIX: specific targeting of <p class="moreh"> based on user screenshot.
-- LOGIC: Finds label -> goes up to parent <td> -> grabs next sibling <td>.
-- ACCURACY: 100% accurate for Mileage/Engine because it uses the table structure.
+RIYASEWANA SCRAPER - HYBRID V3 (Global Dedup + Smart Fixes)
+- FIX: Global 'SEEN_URLS' memory to stop duplicate promoted ads.
+- FIX: Smart Make/Type correction (Toyota on Tata page).
+- FIX: Location regex allows hyphens (Ja-Ela).
+- LOGIC: Respects 'Pickup' in title for Defenders (No forced SUV override).
 """
 
 import time
@@ -14,6 +15,7 @@ import re
 import threading
 import queue
 import os
+import cloudscraper
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,8 +24,8 @@ from tqdm import tqdm
 # ==========================================
 # ⚙️ CONFIGURATION
 # ==========================================
-SEARCH_WORKERS = 2    
-DETAIL_WORKERS = 6    
+SEARCH_WORKERS = 8    
+DETAIL_WORKERS = 20   
 
 FLARESOLVERR_URL = "http://localhost:8191/v1"
 
@@ -31,18 +33,24 @@ MAKES = ['toyota', 'nissan', 'suzuki', 'honda', 'mitsubishi', 'mazda',
          'daihatsu', 'kia', 'hyundai', 'micro', 'audi', 'bmw', 'mercedes-benz', 'land-rover', 'tata', 'mahindra']
 TYPES = ['cars', 'vans', 'suvs', 'crew-cabs', 'pickups']
 
-MAX_PAGES_PER_COMBO = 40
-DAYS_TO_KEEP = 30
-BATCH_SIZE = 10
+MAX_PAGES_PER_COMBO = 160
+DAYS_TO_KEEP = 15
+BATCH_SIZE = 50
 
 print("="*60)
-print(f"🚀 RIYASEWANA DOM MASTER")
+print(f"🚀 RIYASEWANA HYBRID SCRAPER V3")
 print(f"⚡ Search Threads: {SEARCH_WORKERS} | 📥 Extractor Threads: {DETAIL_WORKERS}")
+print(f"🔥 Mode: CloudScraper -> Failover | 🛡 Dedup Active")
 print("="*60)
 
 ad_queue = queue.Queue(maxsize=2000)
 stop_event = threading.Event()
-stats = {'found': 0, 'saved': 0, 'skipped_date': 0}
+
+# 🛡 GLOBAL MEMORY FOR DUPLICATES
+SEEN_URLS = set()
+seen_lock = threading.Lock()
+
+stats = {'found': 0, 'saved': 0, 'skipped_date': 0, 'fast_hits': 0, 'slow_hits': 0, 'dupes': 0}
 stats_lock = threading.Lock()
 
 class BatchWriter:
@@ -77,6 +85,9 @@ class FlareSolverrClient:
     def __init__(self):
         self.url = FLARESOLVERR_URL.rstrip('/')
         self.headers = {"Content-Type": "application/json"}
+        self.scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'darwin', 'desktop': True}
+        )
         self.session_id = None
 
     def create_session(self):
@@ -97,6 +108,18 @@ class FlareSolverrClient:
             except: pass
 
     def fetch(self, url):
+        # METHOD 1: CLOUDSCRAPER
+        try:
+            r = self.scraper.get(url, timeout=10)
+            if r.status_code == 200 and len(r.text) > 1000:
+                if "Attention Required!" not in r.text and "Access denied" not in r.text:
+                    with stats_lock: stats['fast_hits'] += 1
+                    return r.text
+        except: pass
+
+        # METHOD 2: FLARESOLVERR
+        with stats_lock: stats['slow_hits'] += 1
+        if not self.session_id: self.create_session()
         payload = {"cmd": "request.get", "url": url, "maxTimeout": 40000}
         if self.session_id: payload["session"] = self.session_id
         try:
@@ -107,7 +130,7 @@ class FlareSolverrClient:
         return None
 
 # ---------------------------------------------------------
-# WORKER 1: LINK HUNTER
+# WORKER 1: LINK HUNTER (WITH GLOBAL DEDUP)
 # ---------------------------------------------------------
 def harvest_task(client, make, v_type, page_num, cutoff_date):
     url = f"https://riyasewana.com/search/{v_type}/{make}"
@@ -119,13 +142,17 @@ def harvest_task(client, make, v_type, page_num, cutoff_date):
     soup = BeautifulSoup(html, 'html.parser')
     all_links = soup.find_all('a', href=True)
     local_count = 0
-    unique_check = set()
 
     for link in all_links:
         href = link['href']
         if '/buy/' in href and '-sale-' in href:
-            if href in unique_check: continue
-            unique_check.add(href)
+            
+            # 🛡 GLOBAL DUPLICATE CHECK
+            with seen_lock:
+                if href in SEEN_URLS:
+                    with stats_lock: stats['dupes'] += 1
+                    continue
+                SEEN_URLS.add(href)
             
             title = link.get_text(" ", strip=True)
             if len(title) < 5:
@@ -162,13 +189,10 @@ def harvest_task(client, make, v_type, page_num, cutoff_date):
     return local_count
 
 # ---------------------------------------------------------
-# WORKER 2: DOM MASTER EXTRACTOR
+# WORKER 2: DOM MASTER EXTRACTOR (SMART LOGIC)
 # ---------------------------------------------------------
 def extractor_worker(basic_writer, detail_writer, cutoff_date):
     client = FlareSolverrClient()
-    if not client.create_session(): return
-
-    # Regex for Contact finding (Fallback)
     re_phone = re.compile(r'(?:07\d|0\d{2})[- ]?\d{3}[- ]?\d{4}')
     re_yom = re.compile(r'\b(20\d{2}|19\d{2})\b')
     
@@ -184,7 +208,6 @@ def extractor_worker(basic_writer, detail_writer, cutoff_date):
             soup = BeautifulSoup(html, "html.parser")
             full_text = soup.get_text(" ", strip=True)
 
-            # Date Check
             final_date = item['date']
             if final_date == "Check_Page":
                 dm = re.search(r'(\d{4}-\d{2}-\d{2})', full_text)
@@ -204,64 +227,62 @@ def extractor_worker(basic_writer, detail_writer, cutoff_date):
                 'Location': '', 'Description': ''
             }
 
-            # ========================================================
-            # 🟢 THE DOM FIX (Based on Screenshot)
-            # ========================================================
-            # Strategy: Find <p class="moreh"> -> Get Parent <td> -> Get Next <td>
+            # 🔴 SMART AUTO-CORRECTION
+            final_make = item['make']
+            final_type = item['type']
+            title_lower = item['title'].lower()
             
+            # 1. FIX MAKE (e.g. Tata -> Mitsubishi)
+            if final_make not in title_lower:
+                for m in MAKES:
+                    if m in title_lower:
+                        final_make = m
+                        break
+            
+            # 2. FIX TYPE (Generic Keywords only - Preserves 'Pickup' for Defenders)
+            if 'suv' in title_lower or 'jeep' in title_lower: final_type = 'suvs'
+            elif 'van' in title_lower: final_type = 'vans'
+            elif 'car' in title_lower or 'sedan' in title_lower or 'hatchback' in title_lower: final_type = 'cars'
+            elif 'pickup' in title_lower or 'cab' in title_lower: final_type = 'pickups'
+
+            # 🟢 DOM FIX
             labels = soup.find_all('p', class_='moreh')
-            
             for label in labels:
                 txt = label.get_text(strip=True).lower()
-                
-                # Navigate: <p> -> <td> -> next_sibling <td>
                 parent_td = label.find_parent('td')
                 if parent_td:
                     value_td = parent_td.find_next_sibling('td')
                     if value_td:
                         val = value_td.get_text(strip=True)
-                        
-                        if 'mileage' in txt:
-                            details['Mileage'] = val + " km" if "km" not in val.lower() else val
-                        elif 'engine' in txt or 'capacity' in txt:
-                            details['Engine'] = val + " cc" if "cc" not in val.lower() else val
-                        elif 'transmission' in txt or 'gear' in txt:
-                            details['Transmission'] = val
-                        elif 'fuel' in txt:
-                            details['Fuel'] = val
-                        elif 'yom' in txt or 'year' in txt:
-                            details['YOM'] = val
+                        if 'mileage' in txt: details['Mileage'] = val + " km" if "km" not in val.lower() else val
+                        elif 'engine' in txt or 'capacity' in txt: details['Engine'] = val + " cc" if "cc" not in val.lower() else val
+                        elif 'transmission' in txt: details['Transmission'] = val
+                        elif 'fuel' in txt: details['Fuel'] = val
+                        elif 'yom' in txt or 'year' in txt: details['YOM'] = val
 
-            # ========================================================
-            # 🟠 FALLBACKS (If DOM fails)
-            # ========================================================
-            
-            # YOM Fallback
             if not details['YOM']:
                 m_yom = re_yom.search(item['title'])
                 if m_yom: details['YOM'] = m_yom.group(1)
 
-            # Contact Fallback
             phones = re_phone.findall(full_text)
             if phones:
                 clean_phones = list(set([p.replace('-', '').replace(' ', '') for p in phones]))
                 details['Contact'] = " / ".join(clean_phones)
 
-            # Location Fallback
             h1 = soup.find('h1')
             if h1 and " in " in h1.get_text():
                 details['Location'] = h1.get_text().split(" in ")[-1].strip()
-            elif (loc_m := re.search(r'-sale-([a-zA-Z]+)-', item['url'])):
-                details['Location'] = loc_m.group(1).capitalize()
+            # 🟢 LOCATION FIX (ALLOWS HYPHENS LIKE JA-ELA)
+            elif (loc_m := re.search(r'-sale-([a-zA-Z-]+)-\d', item['url'])):
+                details['Location'] = loc_m.group(1).replace('-', ' ').title()
 
-            # Description
             desc_h = soup.find(string=re.compile(r'Description', re.IGNORECASE))
             if desc_h:
                 container = desc_h.find_parent().find_next('div') or desc_h.find_parent().find_next('p')
                 if container: details['Description'] = container.get_text(strip=True)[:500]
 
-            row_basic = {'Date': final_date, 'Make': item['make'], 'Type': item['type'], 'YOM': details['YOM'], 'Model': item['title'], 'Price': item['price']}
-            row_detailed = {'Date': final_date, 'Make': item['make'], 'Type': item['type'], 'YOM': details['YOM'], 'Model': item['title'], 'Price': item['price'], 'Transmission': details['Transmission'], 'Fuel': details['Fuel'], 'Engine': details['Engine'], 'Mileage': details['Mileage'], 'Location': details['Location'], 'Contact': details['Contact'], 'URL': item['url']}
+            row_detailed = {'Date': final_date, 'Make': final_make, 'Type': final_type, 'YOM': details['YOM'], 'Model': item['title'], 'Price': item['price'], 'Transmission': details['Transmission'], 'Fuel': details['Fuel'], 'Engine': details['Engine'], 'Mileage': details['Mileage'], 'Location': details['Location'], 'Contact': details['Contact'], 'URL': item['url']}
+            row_basic = {k: v for k, v in row_detailed.items() if k in basic_writer.fieldnames}
 
             basic_writer.add_row(row_basic)
             detail_writer.add_row(row_detailed)
@@ -286,19 +307,14 @@ def main():
 
     bw = BatchWriter(basic_csv, basic_fields)
     dw = BatchWriter(detail_csv, detail_fields)
-
     client_test = FlareSolverrClient()
-    if not client_test.create_session():
-        print("❌ FlareSolverr Not Found.")
-        return
-    client_test.destroy_session()
-
-    print("🚀 Starting DOM Master Extraction...")
+    
+    print("🚀 Starting Hybrid Extraction...")
     
     ex_pool = ThreadPoolExecutor(max_workers=DETAIL_WORKERS)
     for _ in range(DETAIL_WORKERS):
         ex_pool.submit(extractor_worker, bw, dw, cutoff)
-        time.sleep(1)
+        time.sleep(0.1)
 
     tasks = []
     for make in MAKES:
@@ -315,7 +331,12 @@ def main():
         with tqdm(total=len(futures), desc="Crawling", unit="pg") as pbar:
             for _ in as_completed(futures):
                 pbar.update(1)
-                pbar.set_postfix({"Found": stats['found'], "Saved": stats['saved'], "Old": stats['skipped_date']})
+                pbar.set_postfix({
+                    "Sv": stats['saved'], 
+                    "Dup": stats['dupes'], 
+                    "Fast": stats['fast_hits'],
+                    "Slow": stats['slow_hits']
+                })
 
     ad_queue.join()
     stop_event.set()

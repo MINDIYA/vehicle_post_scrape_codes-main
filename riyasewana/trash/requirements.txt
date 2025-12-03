@@ -1,8 +1,0 @@
-requests
-selenium
-selenium-stealth
-undetected-chromedriver
-beautifulsoup4
-pandas
-tqdm
-webdriver-manager
