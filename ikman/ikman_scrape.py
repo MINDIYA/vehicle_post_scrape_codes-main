@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-IKMAN.LK SCRAPER - FINAL SPECS FIX
-- FIX: Solved missing Fuel/Transmission using 'Keyword Sweep'.
-- LOGIC: Regex searches for finite values (Petrol, Diesel, Auto, Manual) directly.
-- CORE: Includes Location Fix (Subtitle Link) and YOM Fix (Text Stream).
+IKMAN.LK SCRAPER - TURBO EDITION (UNLOCKED)
+- ENGINE: CloudScraper (Bypasses basic Cloudflare checks).
+- SPEED: Sleep timers removed, concurrency maximized.
+- LOGIC: Full regex sweep for Specs (Fuel, Trans), Location, and YOM.
 """
 
 import time
-import requests
 import random
 import csv
 import re
@@ -18,29 +17,30 @@ from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+import cloudscraper
 
 # ==========================================
-# ⚙️ CONFIGURATION
+# ⚙️ TURBO CONFIGURATION
 # ==========================================
-SEARCH_WORKERS = 2    
-DETAIL_WORKERS = 4    
-
-FLARESOLVERR_URL = "http://localhost:8191/v1"
+# CAUTION: High thread counts may trigger IP bans.
+SEARCH_WORKERS = 20      # Scans pages quickly
+DETAIL_WORKERS = 100     # Extracts data in parallel (High I/O)
 
 MAKES = ['toyota', 'nissan', 'suzuki', 'honda', 'mitsubishi', 'mazda', 
          'daihatsu', 'kia', 'hyundai', 'micro', 'audi', 'bmw', 'mercedes-benz', 'land-rover']
 TYPES = ['cars', 'vans', 'suvs', 'motorbikes', 'heavy-duty'] 
 
-MAX_PAGES_PER_COMBO = 10 
+MAX_PAGES_PER_COMBO = 160
 DAYS_TO_KEEP = 30
-BATCH_SIZE = 10
+BATCH_SIZE = 50  # Increased batch size for disk I/O optimization
 
 print("="*60)
-print(f"🚀 IKMAN.LK SPECS FIX")
+print(f"🚀 IKMAN.LK TURBO SCRAPER")
 print(f"⚡ Search Threads: {SEARCH_WORKERS} | 📥 Extractor Threads: {DETAIL_WORKERS}")
 print("="*60)
 
-ad_queue = queue.Queue(maxsize=2000)
+# Increased queue size to handle the flood of incoming links
+ad_queue = queue.Queue(maxsize=10000)
 stop_event = threading.Event()
 stats = {'found': 0, 'saved': 0, 'skipped_date': 0}
 stats_lock = threading.Lock()
@@ -73,38 +73,36 @@ class BatchWriter:
             self.buffer = []
         except: pass
 
-class FlareSolverrClient:
-    def __init__(self):
-        self.url = FLARESOLVERR_URL.rstrip('/')
-        self.headers = {"Content-Type": "application/json"}
-        self.session_id = None
+def get_scraper():
+    """Creates a configured CloudScraper instance."""
+    return cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
 
-    def create_session(self):
+def fetch_url(scraper, url, retries=2):
+    """
+    TURBO FETCHER: Minimal sleep, fast timeouts.
+    """
+    for _ in range(retries):
         try:
-            sid = f"ikman_{random.randint(1000,9999)}_{int(time.time())}"
-            payload = {"cmd": "sessions.create", "session": sid}
-            r = requests.post(self.url, json=payload, headers=self.headers, timeout=10)
+            # Timeout reduced to 10s to fail fast on stuck connections
+            r = scraper.get(url, timeout=10)
+            
             if r.status_code == 200:
-                self.session_id = r.json().get("session")
-                return True
-        except: pass
-        return False
-
-    def destroy_session(self):
-        if self.session_id:
-            try:
-                requests.post(self.url, json={"cmd": "sessions.destroy", "session": self.session_id}, headers=self.headers, timeout=5)
-            except: pass
-
-    def fetch(self, url):
-        payload = {"cmd": "request.get", "url": url, "maxTimeout": 60000}
-        if self.session_id: payload["session"] = self.session_id
-        try:
-            r = requests.post(self.url, json=payload, headers=self.headers, timeout=60)
-            if r.status_code == 200:
-                return r.json().get("solution", {}).get("response", "")
-        except: pass
-        return None
+                return r.text
+            elif r.status_code == 404:
+                return None
+            elif r.status_code == 429:
+                # 429 = Too Many Requests. We MUST pause briefly or we die.
+                time.sleep(5)
+            # If 403, we retry immediately (sometimes it's just a handshake fail)
+        except Exception:
+            pass 
+    return None
 
 def parse_ikman_date(date_str):
     today = datetime.now()
@@ -126,13 +124,15 @@ def parse_ikman_date(date_str):
         return datetime.now().strftime("%Y-%m-%d")
 
 # ---------------------------------------------------------
-# WORKER 1: HARVESTER
+# WORKER 1: HARVESTER (SEARCH PAGES)
 # ---------------------------------------------------------
-def harvest_task(client, make, v_type, page_num, cutoff_date):
+def harvest_task(make, v_type, page_num, cutoff_date):
+    scraper = get_scraper()
+    
     url = f"https://ikman.lk/en/ads/sri-lanka/{v_type}/{make}"
     if page_num > 1: url += f"?page={page_num}"
     
-    html = client.fetch(url)
+    html = fetch_url(scraper, url)
     if not html: return 0
 
     soup = BeautifulSoup(html, 'html.parser')
@@ -168,14 +168,12 @@ def harvest_task(client, make, v_type, page_num, cutoff_date):
     return local_count
 
 # ---------------------------------------------------------
-# WORKER 2: EXTRACTOR
+# WORKER 2: EXTRACTOR (DETAIL PAGES)
 # ---------------------------------------------------------
 def extractor_worker(basic_writer, detail_writer, cutoff_date):
-    client = FlareSolverrClient()
-    if not client.create_session(): return
+    scraper = get_scraper()
 
     # --- COMPILED PATTERNS ---
-    # Finite lists of known values for Fuel and Transmission
     re_fuel = re.compile(r'\b(Petrol|Diesel|Hybrid|Electric|CNG)\b', re.IGNORECASE)
     re_trans = re.compile(r'\b(Automatic|Manual|Tiptronic|Other transmission)\b', re.IGNORECASE)
     re_phone = re.compile(r'(?:07\d|0\d{2})[- ]?\d{3}[- ]?\d{4}')
@@ -186,7 +184,7 @@ def extractor_worker(basic_writer, detail_writer, cutoff_date):
         except queue.Empty: continue
 
         try:
-            html = client.fetch(item['url'])
+            html = fetch_url(scraper, item['url'])
             if not html: continue
 
             soup = BeautifulSoup(html, "html.parser")
@@ -214,10 +212,7 @@ def extractor_worker(basic_writer, detail_writer, cutoff_date):
                 'Location': '', 'Description': ''
             }
 
-            # --- 2. KEYWORD SWEEP (The Fix for Fuel/Trans) ---
-            # We search the whole page text for known keywords.
-            # This bypasses the need to find specific "Labels" in the HTML.
-            
+            # --- 2. KEYWORD SWEEP (The Fix) ---
             m_fuel = re_fuel.search(full_text)
             if m_fuel: details['Fuel'] = m_fuel.group(1).title()
 
@@ -230,7 +225,6 @@ def extractor_worker(basic_writer, detail_writer, cutoff_date):
                 line_lower = line.lower()
                 if i + 1 < len(lines):
                     next_line = lines[i+1]
-                    # Be specific with Labels to avoid false positives
                     if 'model year' in line_lower and not details['YOM']: 
                         details['YOM'] = next_line
                     elif 'engine capacity' in line_lower and not details['Engine']: 
@@ -276,8 +270,6 @@ def extractor_worker(basic_writer, detail_writer, cutoff_date):
 
         except: pass
         finally: ad_queue.task_done()
-    
-    client.destroy_session()
 
 def main():
     cutoff = datetime.now() - timedelta(days=DAYS_TO_KEEP)
@@ -294,19 +286,14 @@ def main():
     bw = BatchWriter(basic_csv, basic_fields)
     dw = BatchWriter(detail_csv, detail_fields)
 
-    client_test = FlareSolverrClient()
-    if not client_test.create_session():
-        print("❌ FlareSolverr Not Found.")
-        return
-    client_test.destroy_session()
-
-    print("🚀 Starting Ikman Specs Fix...")
+    print("🚀 Starting Ikman Turbo Scraper...")
     
+    # Start Extractor Workers First
     ex_pool = ThreadPoolExecutor(max_workers=DETAIL_WORKERS)
     for _ in range(DETAIL_WORKERS):
         ex_pool.submit(extractor_worker, bw, dw, cutoff)
-        time.sleep(1)
 
+    # Generate Search Tasks
     tasks = []
     for make in MAKES:
         for v_type in TYPES:
@@ -314,12 +301,14 @@ def main():
                 tasks.append((make, v_type, page))
     random.shuffle(tasks)
     
+    # Start Search Workers
     with ThreadPoolExecutor(max_workers=SEARCH_WORKERS) as s_pool:
         futures = []
         for (m, t, p) in tasks:
-            futures.append(s_pool.submit(harvest_task, client_test, m, t, p, cutoff))
+            futures.append(s_pool.submit(harvest_task, m, t, p, cutoff))
         
-        with tqdm(total=len(futures), desc="Crawling", unit="pg") as pbar:
+        # Mininterval slows down the console print to save CPU resources
+        with tqdm(total=len(futures), desc="Crawling", unit="pg", mininterval=1.0) as pbar:
             for _ in as_completed(futures):
                 pbar.update(1)
                 pbar.set_postfix({"Found": stats['found'], "Saved": stats['saved'], "Old": stats['skipped_date']})
